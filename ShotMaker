@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+# -*- coding:utf-8
+# ============================================================================
+# Copyright (C) 2022 Autom8 Consultancy Services. All Rights Reserved.
+# The coded instructions, statements, computer programs, and/or related
+# material (collectively the "Data") in these files contain unpublished
+# information proprietary to Autom8 Consultancy Services, which is protected by Indian
+# copyright law.
+#
+# Author : autom8.helpdesk@gmail.com (Swapnil Soni)
+# Module : ShotMaker.py
+# ============================================================================
+"""
+Executable (CLI) for ShotMaker.py with arguments using `argparse`
+"""
+
+# built-in imports
+from __future__ import absolute_import
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+
+# Sniper imports
+import ShotMaker
+from modules import *
+
+
+def pass_args_to_module(arguments):
+    ShotMaker.main()
+
+
+parser = ArgumentParser(
+    prog="ShotMaker",
+    description='''
+                ------------------------------------------
+                Description:
+                ShotMaker
+                Write brief tool description here.
+                ------------------------------------------ 
+                ''',
+    epilog="For more help, please visit help pages for this tool.\nCopyright (C)-2022 @ Studio Sniper.",
+    formatter_class=RawDescriptionHelpFormatter,
+    add_help=True
+    )
+# Optional Arguments (starts with "-" or "--")
+parser.add_argument("-v", "--version", action="version",
+                    version="ShotMaker [Ver: {:s}]".format(version),
+                    help="print version and exit")
+
+# # Positional Arguments
+# parser.add_argument("arg", type=int, default=0, help="positional argument example")
+
+parser.set_defaults(func=pass_args_to_module)
+args = parser.parse_args()
+args.func(args)

@@ -1,0 +1,27 @@
+{
+	"yfxpkg":
+	{
+		"project": "ShotMaker",
+		"type": "standalone",
+		"description": "Deployment config for ShotMaker",
+		"config": 
+		{
+			"settings": {},
+			"build": 
+			{
+				"file": 
+				{
+					"source": "src/ShotMaker/",
+					"deploy": ""
+					"recursive": 1,
+					"pattern": "*.py"
+				},
+				"file":
+				{
+					"source": "scripts/ShotMaker",
+					"deploy": ""
+				}
+			}
+		}
+	}
+}
