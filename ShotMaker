@@ -30,12 +30,12 @@ def pass_args_to_module(arguments):
 parser = ArgumentParser(
     prog="ShotMaker",
     description='''
-                ------------------------------------------
+                ----------------------------------------------
                 Description:
-                ShotMaker
-                Write brief tool description here.
-                ------------------------------------------ 
-                ''',
+                ShotMaker - [Ver: {}]
+                Tool to populate shots for a VFX / Cg project.
+                ---------------------------------------------- 
+                '''.format(version),
     epilog="For more help, please visit help pages for this tool.\nCopyright (C)-2022 @ Studio Sniper.",
     formatter_class=RawDescriptionHelpFormatter,
     add_help=True
