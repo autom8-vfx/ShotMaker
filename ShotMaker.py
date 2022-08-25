@@ -23,10 +23,12 @@ from pprint import pprint
 # Sniper imports
 from ui import *
 from modules import *
-# from au_shotgun import au_sg_connect, au_sg_project
 from au_utils import au_config
+from au_shotgun import au_sg_connect
 from au_core.UniQt import QtCore, QtGui, QtWidgets, QtCompat
+from au_utils import au_logger, au_sysutils
 
+TOOL_NAME = os.path.basename(__file__)
 CSV_FIELDS = ["Project", "Sequence", "Shot Code", "Client Code", "Start Frame", "End Frame", "Client Start",
               "Client End", "Scan Path"]
 
@@ -39,10 +41,13 @@ class ShotMaker(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super(ShotMaker, self).__init__(parent)
         self.ParentDir = os.path.dirname(__file__)
+        self.Log = None
         __ui_file_path = os.path.join(self.ParentDir, "ui", "autom8_shot_maker.ui")
         QtCompat.loadUi(__ui_file_path, self)
         self.CommonConfig = au_config.load(["common", "settings.yml"])
+        self.SG = au_sg_connect.Shotgun(p_create_scan_bln=True).get_shotgun()
         self.traverse = None
+        self.worker = None
         self.CreateDirs = False
         self.ImgLib = {"autom8_white.png": self.lbl_logo, "insert.png": self.btn_upload,
                        "download.png": self.btn_download, "bugs.png": self.btn_bug, "question.png": self.btn_help, }
@@ -50,6 +55,9 @@ class ShotMaker(QtWidgets.QWidget):
 
     def init_ui(self):
         self.lbl_version.setText("Ver: [{}]".format(version))
+        self.lbl_prog.setText("")
+        self.prog_bar.setVisible(False)
+        self.lbl_prog.setVisible(False)
         for key in self.ImgLib.keys():
             self.set_images_and_icons(self.ImgLib[key], key)
         self.btn_upload.clicked.connect(self.btn_upload_clicked)
@@ -66,6 +74,20 @@ class ShotMaker(QtWidgets.QWidget):
             widget.setPixmap(pixmap)
         elif isinstance(widget, QtWidgets.QPushButton):
             widget.setIcon(pixmap)
+
+    def start_logging(self):
+        self.Log = au_logger.create("ShotMaker")
+        d_now, t_now = au_sysutils.get_time_stamp(True)
+        timestamp = "{}, {}".format(d_now, t_now)
+        details = au_sysutils.get_system_details()
+        info_str = "TOOL NAME".ljust(20) + ": {}\n".format(TOOL_NAME)
+        info_str += "USER".ljust(20) + ": {}\n".format(details[2])
+        info_str += "EXECUTED FROM".ljust(20) + ": {}\n".format(details[1])
+        info_str += "MACHINE NAME".ljust(20) + ": {}\n".format(details[0])
+        info_str += "OPERATING SYSTEM".ljust(20) + ": {}\n".format(details[3])
+        info_str += "TIME-STAMP".ljust(20) + ": {}\n".format(timestamp)
+        self.Log.info("\n\n{dec}\n[ * LOG BASICS * ]\n{inf}{dec}\n".format(dec="*" * 50, inf=info_str))
+        self.Log.info("I am in ShotMaker [Ver: {:s}] tool".format(version))
 
     def read_csv_data(self, csv_path=None):
         info_list = []
@@ -95,6 +117,28 @@ class ShotMaker(QtWidgets.QWidget):
         self.lbl_prog.setVisible(True)
         return True, "Success", info_list
 
+    def pass_data_to_publish_thread(self):
+        items_list = []
+        # Read data from UI:
+        for ind in range(self.lst_shots.count()):
+            item = self.lst_shots.item(ind)
+            wid = self.lst_shots.itemWidget(item)
+            item_dict = {"show_code": wid.lbl_show.text(), "seq": wid.lbl_seq.text(), "shot": wid.lbl_shot.text(),
+                         "client_name": wid.lbl_client.text(), "start": wid.lbl_start.text(), "end": wid.lbl_end.text(),
+                         "client_start": wid.lbl_cs.text(), "client_end": wid.lbl_ce.text(),
+                         "scan_path": str(wid.accessibleName())}
+            # pprint(item_dict, indent=4)
+            items_list.append(item_dict)
+        self.prog_bar.setValue(0)
+        self.worker = publish_shot.Autom8PublishShots(self.SG, self.Log, items_list)
+        self.worker.createDirStart.connect(self.create_dirs_started)
+        self.worker.hardlinkStart.connect(self.hard_linking_started)
+        self.worker.hardlinkProgress.connect(self.hard_linking_progress)
+        self.worker.hardLinkFinish.connect(self.hard_linking_finished)
+        self.worker.shotgunUpdateFinish.connect(self.shotgun_update_finished)
+        self.worker.publishProcessFinish.connect(self.publish_process_finished)
+        self.worker.start()
+
     def generate_list_item(self, data=None):
         """Updates signal emitted by CreateListItem thread. This signal was emitted after each list item generation.
         Updates the population of shots using CustomShotWidget, coming from the list generation thread.
@@ -109,9 +153,10 @@ class ShotMaker(QtWidgets.QWidget):
         item = QtWidgets.QListWidgetItem()
         item.setSizeHint(QtCore.QSize(200, 36))
         item.setSelected(True)
-        if val == 2:
-            pixmap = QtGui.QPixmap.fromImage(os.path.join(self.ParentDir, "icons", "folder.png"))
-            wid.lbl_icon.setPixmap(pixmap.scaled(32, 32, QtCore.Qt.KeepAspectRatio))
+        # # test block
+        # if val == 2:
+        #     pixmap = QtGui.QPixmap.fromImage(os.path.join(self.ParentDir, "icons", "folder.png"))
+        #     wid.lbl_icon.setPixmap(pixmap.scaled(32, 32, QtCore.Qt.KeepAspectRatio))
 
         self.lst_shots.addItem(item)
         self.lst_shots.setItemWidget(item, wid)
@@ -121,6 +166,69 @@ class ShotMaker(QtWidgets.QWidget):
         self.lbl_prog.setText("CSV loaded successfully...")
         self.btn_create.setEnabled(True)
         self.lst_shots.setFocus()
+
+    def create_dirs_started(self, shot_code):
+        self.lbl_prog.setText("Creating Directories for Shot: [{}]".format(shot_code))
+        self.Log.info("Creating Directories for Shot: [{}]".format(shot_code))
+
+    def hard_linking_started(self, shot_code):
+        self.lbl_prog.setText("Hard-linking Scans for Shot: [{}]".format(shot_code))
+        self.Log.info("Hard-linking Scans for Shot: [{}]".format(shot_code))
+
+    def hard_linking_progress(self, message):
+        msg_split = str(message).split("|")
+        if msg_split[0] == "1":
+            self.Log.info(msg_split[-1])
+        elif msg_split[0] == "2":
+            self.Log.warning(msg_split[-1])
+        elif msg_split[0] == "3":
+            self.Log.error(msg_split[-1])
+        elif msg_split[0] == "4":
+            self.Log.exception(msg_split[-1])
+
+    def hard_linking_finished(self, data_list):
+        if data_list[1]:
+            self.lbl_prog.setText("Updating Shotgun for shot [{}]".format(data_list[-1]))
+            self.Log.info("Updating Shotgun for shot [{}]".format(data_list[-1]))
+        else:
+            item = self.lst_shots.item(data_list[0])
+            wid = self.lst_shots.itemWidget(item)
+            if data_list[2] == "#CD5C5C":
+                wid.setStyleSheet("color: #111; background-color: #CD5C5C;")
+                wid.setToolTip("[Alert]: Issue with hard-linking. Check log for details")
+            elif data_list[2] == "#e6c740":
+                wid.setStyleSheet("color: #111; background-color: #e6c740;")
+                wid.setToolTip("[Alert]: No scans available to publish")
+
+            self.prog_bar.setValue(data_list[0] + 1)
+
+    def shotgun_update_finished(self, proc_list):
+        count = int(proc_list[0])
+        item = self.lst_shots.item(proc_list[0])
+        wid = self.lst_shots.itemWidget(item)
+        if proc_list[1]:
+            msg = "Shotgun updated successfully the details are as follows:\n"
+            msg += "[SHOW]    : {}\n".format(proc_list[2])
+            msg += "[SEQUENCE]: {}\n".format(proc_list[3])
+            msg += "[SHOT]    : {}\n".format(proc_list[4])
+            msg += "[TASK]    : {}\n".format(proc_list[5])
+            msg += "[VERSION] : {}\n".format(proc_list[6])
+            self.Log.info(msg)
+            wid.setStyleSheet("color: #111; background-color: #7CFC00;")
+            wid.setToolTip("Successfully published")
+        else:
+            wid.setStyleSheet("color: #111; background-color: #CD5C5C;")
+            wid.setToolTip("[Alert]: Issue publishing Check log for details")
+        self.prog_bar.setValue(count + 1)
+
+    def publish_process_finished(self, msg):
+        msg_box = QtWidgets.QMessageBox()
+        msg_box.setWindowTitle("Bingo !")
+        msg_box.setText("Shot Publish process completed successfully")
+        msg_box.setIcon(QtWidgets.QMessageBox.Information)
+        ret_val = msg_box.exec_()
+        if ret_val:
+            self.btn_create.setEnabled(False)
 
     def btn_upload_clicked(self):
         dialog = QtWidgets.QFileDialog()
@@ -139,10 +247,30 @@ class ShotMaker(QtWidgets.QWidget):
                 self.traverse.start()
 
     def btn_download_clicked(self):
-        pass
+        dn_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory")
+        if dn_path:
+            template = os.path.join(dn_path, "shots_template.csv")
+            with open(template, "w") as dn_file:
+                dn_file.write(", ".join(CSV_FIELDS))
+            msg_box = QtWidgets.QMessageBox()
+            msg_box.setWindowTitle("Bingo !")
+            msg_box.setText("`shots_template.csv` downloaded on selected location !\nPlease check...")
+            msg_box.setIcon(QtWidgets.QMessageBox.Information)
+            msg_box.exec_()
 
     def btn_create_clicked(self):
-        pass
+        """Starts execution of Publishing shots and EXRs (if any), and publish shots to shotgun.
+
+        """
+        msg_box = QtWidgets.QMessageBox()
+        msg_box.setWindowTitle("Alert !")
+        msg_box.setText("Do you want to publish everything loaded ?")
+        msg_box.setIcon(QtWidgets.QMessageBox.Question)
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        ret_val = msg_box.exec_()
+        if ret_val == 16384:
+            self.start_logging()
+            self.pass_data_to_publish_thread()
 
     def btn_bug_clicked(self):
         pass
@@ -283,7 +411,11 @@ class CustomShotWidget(QtWidgets.QWidget):
         :return:
         """
         if data:
-            icon_path = os.path.join(self.ParentDir, "icons", "images.png")
+            if str(data[8]).strip() is not "":
+                icon_path = os.path.join(self.ParentDir, "icons", "images.png")
+                self.setAccessibleName(str(data[8]))
+            else:
+                icon_path = os.path.join(self.ParentDir, "icons", "folder.png")
             pixmap = QtGui.QPixmap.fromImage(icon_path)
             self.lbl_icon.setPixmap(pixmap.scaled(32, 32, QtCore.Qt.KeepAspectRatio))
             self.lbl_show.setText(str(data[0]))
@@ -294,7 +426,6 @@ class CustomShotWidget(QtWidgets.QWidget):
             self.lbl_end.setText(str(data[5]))
             self.lbl_cs.setText(str(data[6]))
             self.lbl_ce.setText(str(data[7]))
-            self.setAccessibleName(str(data[8]))
 
 
 def main():

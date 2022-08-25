@@ -1,6 +1,6 @@
 
 =================
-ShotMaker [0.2.0]
+ShotMaker [1.0.0]
 =================
 
 This is the ShotMaker application.
